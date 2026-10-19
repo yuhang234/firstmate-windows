@@ -17,8 +17,54 @@ FM_LOCK_STALE_AFTER="${FM_LOCK_STALE_AFTER:-2}"
 # fm_platform_link_or_marker / fm_platform_link_target so the lock is
 # acquirable on Windows (Git Bash/MSYS), where `ln -s` silently degrades
 # (upstream issue #3267), without any change to POSIX lock semantics.
-# shellcheck source=bin/fm-platform-lib.sh
-. "$FM_WAKE_LIB_DIR/fm-platform-lib.sh"
+#
+# The library ships next to this file in every real checkout, so the guard
+# below is not a softer dependency: it exists because test fixtures stage a
+# PARTIAL bin/ by name (a cp list, or one symlink per file) and a forgotten
+# entry used to kill the fixture with "No such file or directory". When the
+# library is absent, POSIX falls back to the inline definitions below - each
+# one byte-identical to the historical command the library wraps - and
+# Windows REFUSES, because MSYS `ln -s` silently copies and a fallback there
+# would quietly stop proving lock ownership (upstream issue #3267).
+if [ -f "$FM_WAKE_LIB_DIR/fm-platform-lib.sh" ]; then
+  # shellcheck source=bin/fm-platform-lib.sh
+  . "$FM_WAKE_LIB_DIR/fm-platform-lib.sh"
+else
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+      printf 'error: bin/fm-wake-lib.sh requires bin/fm-platform-lib.sh on Windows (Git Bash/MSYS); refusing to fall back to MSYS ln -s, which silently copies (upstream issue #3267)\n' >&2
+      exit 1
+      ;;
+  esac
+  FM_PLATFORM_UNAME=
+  # shellcheck disable=SC2034  # Output global, read by the sourcing caller.
+  FM_PLATFORM_LINK_MODE=
+  fm_platform_is_msys() { return 1; }
+  fm_platform_is_windows() { return 1; }
+  fm_platform_uname() {
+    [ -n "$FM_PLATFORM_UNAME" ] || FM_PLATFORM_UNAME=$(uname -s 2>/dev/null || printf 'unknown')
+    printf '%s' "$FM_PLATFORM_UNAME"
+  }
+  fm_platform_win_to_posix() { printf '%s' "$1"; }
+  fm_platform_posix_to_win() { printf '%s' "$1"; }
+  fm_platform_socket_identity() { return 1; }
+  fm_platform_link_marker_file() { printf '%s' '.fm-platform-owner'; }
+  # Each definition below is exactly the historical inline command:
+  # `ln -s target link`, `readlink link`, `[ -L link ]`, `rm -f link`.
+  # shellcheck disable=SC2034  # Output global, read by the sourcing caller.
+  fm_platform_link_or_marker() {
+    local link=$1 target=$2
+    FM_PLATFORM_LINK_MODE=
+    if ln -s "$target" "$link" 2>/dev/null; then
+      FM_PLATFORM_LINK_MODE=symlink
+      return 0
+    fi
+    return 1
+  }
+  fm_platform_link_target() { readlink "$1" 2>/dev/null; }
+  fm_platform_link_is_link() { [ -L "$1" ]; }
+  fm_platform_remove_link() { rm -f "$1" 2>/dev/null; }
+fi
 # Resolved once at source time: fm_pid_identity and fm_path_mtime run inside 0.2s
 # confirm and 0.5s attach polls, and forking uname per call is a measurable cost on
 # the platform (Git Bash/MSYS) that already pays the highest fork price.

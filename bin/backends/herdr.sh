@@ -99,8 +99,27 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # a drive-letter path (C:\Users\...\herdr.sock), which the POSIX-only
 # canonicalizer below refuses outright (upstream issue #3283). No source-time
 # side effects beyond a cached uname, so read-only callers are unaffected.
-# shellcheck source=bin/fm-platform-lib.sh
-. "$FM_BACKEND_HERDR_ROOT/bin/fm-platform-lib.sh"
+#
+# The library ships next to bin/ in every real checkout; the guard below is
+# not a softer dependency. A fixture that stages a PARTIAL bin/ by name can
+# leave it behind, and on POSIX the adapter then behaves exactly as it did
+# before the Windows branch existed (fm_platform_is_windows reports false, so
+# the canonicalizer's Windows branch never fires). On Windows a missing
+# library would silently reduce the canonicalizer to its POSIX half and
+# refuse every live socket with a confusing error, so the adapter refuses at
+# source time instead.
+if [ -f "$FM_BACKEND_HERDR_ROOT/bin/fm-platform-lib.sh" ]; then
+  # shellcheck source=bin/fm-platform-lib.sh
+  . "$FM_BACKEND_HERDR_ROOT/bin/fm-platform-lib.sh"
+else
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+      printf 'error: bin/backends/herdr.sh requires bin/fm-platform-lib.sh on Windows (Git Bash/MSYS); the socket canonicalizer cannot resolve Windows socket paths without it (upstream issue #3283)\n' >&2
+      exit 1
+      ;;
+  esac
+  fm_platform_is_windows() { return 1; }
+fi
 
 FM_BACKEND_HERDR_MIN_PROTOCOL=14
 # events.subscribe (the native pane.agent_status_changed push stream) and its
