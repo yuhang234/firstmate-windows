@@ -851,7 +851,15 @@ secondmate_handoff_detect() {
 
 install_cmd() {
   case "$1" in
-    tmux|node|git|gh|curl|jq|orca|zellij) echo "brew install $1  # or the platform's package manager" ;;
+    # On Windows (Git Bash/MSYS) there is no platform package manager;
+    # firstmate's own Windows bootstrap installs the pinned jq.exe.
+    jq)
+      case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*) echo "bin/fm-windows-bootstrap.sh  # installs the pinned jq.exe for Git Bash" ;;
+        *) echo "brew install jq  # or the platform's package manager" ;;
+      esac
+      ;;
+    tmux|node|git|gh|curl|orca|zellij) echo "brew install $1  # or the platform's package manager" ;;
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;

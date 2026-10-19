@@ -93,6 +93,34 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # shellcheck source=bin/fm-agent-process-lib.sh
 . "$FM_BACKEND_HERDR_ROOT/bin/fm-agent-process-lib.sh"
 
+# Single owner of platform detection and portable primitives
+# (bin/fm-platform-lib.sh). The herdr adapter on Windows (Git Bash/MSYS) needs
+# it for socket-path canonicalization: herdr's own Windows socket identity is
+# a drive-letter path (C:\Users\...\herdr.sock), which the POSIX-only
+# canonicalizer below refuses outright (upstream issue #3283). No source-time
+# side effects beyond a cached uname, so read-only callers are unaffected.
+#
+# The library ships next to bin/ in every real checkout; the guard below is
+# not a softer dependency. A fixture that stages a PARTIAL bin/ by name can
+# leave it behind, and on POSIX the adapter then behaves exactly as it did
+# before the Windows branch existed (fm_platform_is_windows reports false, so
+# the canonicalizer's Windows branch never fires). On Windows a missing
+# library would silently reduce the canonicalizer to its POSIX half and
+# refuse every live socket with a confusing error, so the adapter refuses at
+# source time instead.
+if [ -f "$FM_BACKEND_HERDR_ROOT/bin/fm-platform-lib.sh" ]; then
+  # shellcheck source=bin/fm-platform-lib.sh
+  . "$FM_BACKEND_HERDR_ROOT/bin/fm-platform-lib.sh"
+else
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+      printf 'error: bin/backends/herdr.sh requires bin/fm-platform-lib.sh on Windows (Git Bash/MSYS); the socket canonicalizer cannot resolve Windows socket paths without it (upstream issue #3283)\n' >&2
+      exit 1
+      ;;
+  esac
+  fm_platform_is_windows() { return 1; }
+fi
+
 FM_BACKEND_HERDR_MIN_PROTOCOL=14
 # events.subscribe (the native pane.agent_status_changed push stream) and its
 # subscription_event schema first shipped at protocol 16 (verified: herdr
@@ -835,6 +863,24 @@ fm_backend_herdr_presentation_lock_namespace_valid() {
 fm_backend_herdr_canonical_socket_path() {  # <socket-path>
   local socket=$1 sock_dir sock_base
   [ -n "$socket" ] || return 1
+  # Windows (Git Bash/MSYS) branch. Herdr on Windows reports its API socket as
+  # a drive-letter path (C:\Users\fuyou\AppData\Roaming\herdr\herdr.sock)
+  # or a named pipe, neither of which starts with '/', so the POSIX-only case
+  # below refuses a live Windows server outright (upstream issue #3283).
+  # Delegate to the single platform owner, whose output is the Windows
+  # canonical form: drive letters upper-cased, separators normalized to '/',
+  # and an existing parent resolved through the MSYS layer so two spellings of
+  # one socket compare equal. A POSIX-shaped path on Windows (an MSYS-spelled
+  # socket) does NOT match this branch and falls through to the unchanged
+  # POSIX logic below, so POSIX behaviour stays byte-identical.
+  if fm_platform_is_windows; then
+    case "$socket" in
+      [A-Za-z]:[/\\]*|\\\\*)
+        fm_platform_socket_identity "$socket"
+        return $?
+        ;;
+    esac
+  fi
   case "$socket" in
     /*) ;;
     *) return 1 ;;
