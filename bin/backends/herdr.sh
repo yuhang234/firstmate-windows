@@ -814,12 +814,31 @@ fm_backend_herdr_projection_workspace_label() {  # <task-id> <projection-id>
 # The uid rather than $XDG_RUNTIME_DIR names it because that variable can differ
 # or be absent between login contexts of one account, which would split one
 # session's lock across processes.
+# Windows (Git Bash/MSYS) puts it under the account's own profile root instead
+# of /tmp: MSYS cannot enforce POSIX mode bits, so the mode-700 ownership proof
+# below can never hold in the machine-wide temp directory (see
+# fm_backend_herdr_presentation_lock_namespace_valid), while the profile root is
+# per-account by Windows ACL and keeps the same "one account, many homes" scope.
+# The uid suffix is kept so the directory still names its one owning account.
 fm_backend_herdr_presentation_lock_namespace() {
-  local uid
+  local uid root
   uid=$(id -u 2>/dev/null) || return 1
   case "$uid" in
     ''|*[!0-9]*) return 1 ;;
   esac
+  if fm_platform_is_windows; then
+    if [ -n "${LOCALAPPDATA:-}" ]; then
+      root=$LOCALAPPDATA
+    elif [ -n "${HOME:-}" ]; then
+      root=$HOME/AppData/Local
+    else
+      return 1
+    fi
+    root=$(fm_platform_win_to_posix "$root") || return 1
+    [ -n "$root" ] || return 1
+    printf '%s/firstmate/herdr-presentation-%s' "${root%/}" "$uid"
+    return 0
+  fi
   printf '/tmp/firstmate-herdr-presentation-%s' "$uid"
 }
 
@@ -839,13 +858,27 @@ fm_backend_herdr_presentation_lock_namespace_uid() {
   fi
 }
 
+# fm_backend_herdr_presentation_lock_namespace_valid: prove that <dir> is this
+# account's own private namespace. A symlink, another account's directory, and a
+# world-accessible directory are all refused, never adopted.
+# Windows (Git Bash/MSYS) cannot satisfy the mode half: `mkdir -m 700` creates
+# the directory and then fails with "cannot change permissions" (so the mode
+# stays 755), and `chmod` is a silent no-op, so requiring mode 700 there refused
+# every namespace and disabled presentation projection entirely. The Windows
+# branch keeps the ownership proof and replaces the mode proof with the location
+# proof: the namespace lives inside this account's own profile root, which
+# Windows protects per account by ACL.
 fm_backend_herdr_presentation_lock_namespace_valid() {
   local dir=$1 expected_uid owner mode
   [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
   expected_uid=$(id -u 2>/dev/null) || return 1
   owner=$(fm_backend_herdr_presentation_lock_namespace_uid "$dir") || return 1
+  [ "$owner" = "$expected_uid" ] || return 1
+  if fm_platform_is_windows; then
+    return 0
+  fi
   mode=$(fm_backend_herdr_presentation_lock_namespace_mode "$dir") || return 1
-  [ "$owner" = "$expected_uid" ] && [ "$mode" = 700 ]
+  [ "$mode" = 700 ]
 }
 
 # Resolve the one verified running named-session socket path as an absolute
@@ -926,7 +959,14 @@ fm_backend_herdr_presentation_session_lock_path() {  # <session>
   dir=$(fm_backend_herdr_presentation_lock_namespace) || return 1
   [ -n "$dir" ] || return 1
   if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then
-    if ! mkdir -m 700 "$dir" 2>/dev/null; then
+    if fm_platform_is_windows; then
+      # MSYS `mkdir -m 700` creates the directory and then fails on the mode
+      # ("cannot change permissions"), so the Windows branch creates the
+      # profile-root parents plainly and lets the validation below prove the
+      # result instead of trusting a mode this platform cannot set.
+      mkdir -p "$dir" 2>/dev/null || :
+      fm_backend_herdr_presentation_lock_namespace_valid "$dir" || return 1
+    elif ! mkdir -m 700 "$dir" 2>/dev/null; then
       fm_backend_herdr_presentation_lock_namespace_valid "$dir" || return 1
     fi
   fi

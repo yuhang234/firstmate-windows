@@ -90,6 +90,12 @@ pass `-Backend herdr`.
 - **`bin/backends/herdr.sh`**: `fm_backend_herdr_canonical_socket_path`
   canonicalizes and compares drive-letter and named-pipe socket paths, so a
   live Windows Herdr server resolves. POSIX behaviour is byte-identical.
+- **`bin/backends/herdr.sh`**: the presentation session lock namespace
+  moves under `%LOCALAPPDATA%\firstmate\herdr-presentation-<uid>` on
+  Windows and keeps the ownership proof while dropping the mode-700 proof,
+  because MSYS cannot set POSIX mode bits (see "Known limitations").
+  POSIX keeps `/tmp/firstmate-herdr-presentation-<uid>` with its mode-700
+  proof, byte-identical.
 - **`firstmate.ps1`** / **`bootstrap.ps1`** (new): the PowerShell entry
   points.
 
@@ -100,6 +106,13 @@ The crewmate spawn path is the ordinary herdr backend path, unchanged:
 `fm_backend_herdr_create_task` creates the task tab and its pane, and the
 launch command is delivered into that pane. The observable result is a new
 pane in the Herdr session running the selected agent in its worktree.
+
+With presentation spaces enabled (the default), each task also gets its own
+disposable workspace created with `--no-focus` immediately after the home
+workspace, so workers appear below the captain's own workspace and never
+steal focus from it. Ordering a projected workspace needs `python3`, which
+Git Bash does not provide, so on Windows Herdr's own append order places it
+and the ordering step is skipped rather than failing the spawn.
 
 Herdr accepts MSYS-spelled `--cwd` paths directly, so no path conversion is
 needed on the spawn path.
@@ -134,6 +147,13 @@ branches run behind a fake `uname`). See `tests/windows/README.md`.
 - **Native symlinks.** With Windows Developer Mode off (or no admin),
   `MSYS=winsymlinks:nativestrict` still fails, and the session lock falls
   back to marker-directory mode. Both modes are tested.
+- **POSIX mode bits.** MSYS cannot apply them: `mkdir -m 700 <dir>` creates
+  the directory and then exits 1 with "cannot change permissions" (the mode
+  stays 755), and `chmod` returns 0 without changing anything. Nothing on
+  Windows may treat a mode as a security proof; the presentation lock
+  namespace uses the account's profile directory instead, where the Windows
+  ACL is the boundary, and still refuses a symlink, a missing directory, or
+  another account's directory.
 - **Herdr sessions.** All Herdr testing should happen in a named
   non-`default` session (`herdr --session <name>`); the `default` session is
   the operator's live desktop.

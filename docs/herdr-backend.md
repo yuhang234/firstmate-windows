@@ -366,6 +366,8 @@ An existing journal suppresses another projected create.
 Before any recovery mutation, Firstmate holds both the task spawn lock and the named-session presentation lock.
 That presentation lock lives in a namespace private to the OS account, so another account on the same host running its own Firstmate on Herdr cannot block this account's spawn, recovery, or teardown.
 A namespace at this account's name that another account owns, or that is not mode 700, is still refused and is never adopted, chowned, or removed.
+On Windows (Git Bash/MSYS) that namespace lives under the account's own profile directory, because MSYS cannot apply POSIX mode bits at all: `mkdir -m 700` creates the directory and then fails, and `chmod` is a silent no-op.
+There the unchanged ownership proof plus that per-account profile location are the privacy proof, and a symlink, a missing directory, or another account's directory is still refused.
 
 A same-identity version 2 binding may replace one exact agent-free restart husk in place.
 A husk is a restored same-labeled tab with a missing pane or no registered agent, as [Restart and liveness behavior](#restart-and-liveness-behavior) describes.
